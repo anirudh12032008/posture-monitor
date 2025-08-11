@@ -1,0 +1,17 @@
+{
+  "name": "digital-posture-monitor",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:css": "npx tailwindcss -i ./tailwind.css -o ./output.css --watch"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "tailwindcss": "^3.4.0"
+  },
+  "dependencies": {
+    "@tensorflow-models/posenet": "^2.2.2",
+    "@tensorflow/tfjs": "^4.16.0"
+  }
+}

@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Digital Posture Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.0.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.1/dist/posenet.min.js"></script>
+    <link rel="stylesheet" href="styles.css" />
+
+</head>
+<body class="min-h-screen text-white">
+    <div class="animated-bg"></div>
+    
+    <div class="container mx-auto p-6 relative z-10">
+        <header class="flex items-center justify-between mb-8 hologram-effect p-6">
+            <div class="flex items-center space-x-4">
+                <div class="w-16 h-16 rounded-full bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 flex items-center justify-center neon-glow relative">
+                    <div class="w-8 h-8 bg-white rounded-full"></div>
+                </div>
+                <div>
+                    <h1 class="text-4xl font-bold title-glow">Digital Posture Monitor</h1>
+                    <p class="subtitle text-lg">AI-powered real-time posture analysis</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button id="achievementsBtn" class="cyber-button bg-gradient-to-r from-yellow-600 via-amber-500 to-yellow-600 text-xs" style="padding: 6px 12px;">🏆 Achievements</button>
+                <div id="statusIndicator" class="status-indicator neon-glow">Status: Idle</div>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-12 gap-6">
+            <section class="col-span-7 glass-strong p-6 flex flex-col space-y-4 neon-glow">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-semibold text-white flex items-center">
+                        Live Camera Feed
+                    </h2>
+                    <div class="flex space-x-1">
+                        <select id="cameraSelect" class="camera-select cyber-button bg-gradient-to-r from-blue-600 to-blue-500 text-xs text-white" style="padding: 6px 12px; background-color: transparent; border: 1px solid rgba(0,212,255,0.3);">
+                            <option value="" class="camera-option">Select Camera...</option>
+                        </select>
+                        <button id="startCamera" class="cyber-button text-xs" style="padding: 6px 12px;">Start</button>
+                        <button id="stopCamera" class="cyber-button bg-gradient-to-r from-red-500 via-pink-500 to-red-600 text-xs" style="padding: 6px 12px;">Stop</button>
+                        <button id="refreshPermissions" class="cyber-button bg-gradient-to-r from-orange-500 via-yellow-500 to-orange-600 text-xs" style="padding: 6px 12px;">Refresh</button>
+                        <button id="breakBtn" class="cyber-button bg-gradient-to-r from-green-500 via-teal-500 to-green-600 text-xs" style="padding: 6px 12px;">Break</button>
+                    </div>
+                </div>
+
+                <div class="video-container">
+                    <video id="video" class="w-full" playsinline muted style="max-height: 400px;"></video>
+                    <canvas id="overlay" class="absolute left-0 top-0 w-full h-full pointer-events-none" style="z-index: 10;"></canvas>
+                    <div class="scan-line"></div>
+                </div>
+
+                <div class="glass neon-border p-3 hologram-effect">
+                    <label class="flex items-center space-x-3 text-sm font-medium text-cyan-300 cursor-pointer">
+                        <input id="showVisualPointers" type="checkbox" class="w-4 h-4 text-cyan-500 bg-transparent border-2 border-cyan-400 rounded focus:ring-cyan-500 focus:ring-2">
+                        <span class="select-none">Show Visual Pointers (Skeleton & Keypoints)</span>
+                    </label>
+                </div>
+
+                <div class="glass neon-border p-4 hologram-effect">
+                    <div class="flex items-center justify-between mb-3">
+                        <label class="text-sm font-medium text-cyan-300 flex items-center">
+                            Detection FPS: 
+                            <span id="fpsVal" class="text-white font-bold ml-2 text-lg">10</span>
+                        </label>
+                        <button id="debugBtn" class="cyber-button bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600 text-xs">Debug</button>
+                    </div>
+                    <input id="fpsRange" type="range" min="5" max="30" value="10" class="w-full h-3 bg-gradient-to-r from-cyan-400 via-purple-500 to-pink-500 rounded-lg appearance-none cursor-pointer" />
+                </div>
+                
+                <div id="debugPanel" class="hidden glass p-4 text-xs border border-purple-500/30 hologram-effect">
+                    <h4 class="font-bold mb-2 text-purple-300 flex items-center">
+                        Debug Information
+                    </h4>
+                    <div id="debugInfo" class="text-gray-300">No data yet...</div>
+                </div>
+            </section>
+
+            <aside class="col-span-5 glass-strong p-6 flex flex-col space-y-4 neon-glow hologram-effect">
+                <div class="stats-card">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center justify-center">
+                        Live Score
+                    </h3>
+                    <div class="mt-2">
+                        <div id="scoreText" class="score-display" data-score="—">—</div>
+                        <div class="progress-bar mt-4">
+                            <div id="scoreBar" class="progress-fill" style="width:0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="stats-card">
+                        <div class="text-sm opacity-80 flex items-center justify-center mb-2">
+                            Today: Good
+                        </div>
+                        <div id="todayGood" class="text-3xl font-bold text-green-400">0s</div>
+                    </div>
+                    <div class="stats-card">
+                        <div class="text-sm opacity-80 flex items-center justify-center mb-2">
+                            Today: Poor
+                        </div>
+                        <div id="todayPoor" class="text-3xl font-bold text-red-400">0s</div>
+                    </div>
+                </div>
+
+                <div class="glass neon-border flex-1 hologram-effect" style="max-height: 200px;">
+                    <div class="p-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <h4 class="font-medium flex items-center">
+                                Activity Log
+                            </h4>
+                            <button id="clearLogs" class="text-sm opacity-80 hover:opacity-100 cyber-button text-xs">Clear</button>
+                        </div>
+                        <div class="overflow-y-auto" style="max-height: 150px;">
+                            <ul id="logList" class="text-sm space-y-2"></ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center">
+                    <button id="settingsBtn" class="cyber-button bg-gradient-to-r from-gray-700 via-gray-500 to-gray-600">Settings</button>
+                    <div id="rotatingTip" class="italic opacity-80 text-xs text-center flex-1 mx-4 hologram-effect p-2 rounded">
+                        Tip: Keep your monitor at eye level.
+                    </div>
+                </div>
+            </aside>
+        </main>
+
+        <div id="breakModal" class="fixed inset-0 hidden items-center justify-center bg-black/60 z-50 backdrop-blur-sm">
+            <div class="glass-strong p-8 w-96 neon-glow hologram-effect">
+                <h3 class="text-xl mb-4 text-center title-glow">Break Exercise</h3>
+                <div class="text-center">
+                    <div id="exerciseName" class="text-3xl font-bold mb-6 text-cyan-300">Neck Rolls</div>
+                    <div id="exerciseTimer" class="text-8xl font-mono mb-8 score-display">30</div>
+                    <div class="space-x-4">
+                        <button id="skipExercise" class="cyber-button bg-gradient-to-r from-orange-500 to-red-500">Skip</button>
+                        <button id="completeExercise" class="cyber-button bg-gradient-to-r from-green-500 to-emerald-500">Done</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="settingsModal" class="fixed inset-0 hidden items-center justify-center bg-black/60 z-50 backdrop-blur-sm">
+            <div class="glass-strong p-8 w-[500px] max-h-[80vh] overflow-y-auto neon-glow hologram-effect">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-2xl title-glow">Settings</h3>
+                    <button id="closeSettings" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                </div>
+                
+                <div class="space-y-8">
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-cyan-300 mb-4">Detection Settings</h4>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Detection Sensitivity</label>
+                                <input id="sensitivityRange" type="range" min="0.1" max="2.0" step="0.1" value="1.0" 
+                                       class="w-full h-2 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-lg appearance-none cursor-pointer">
+                                <div class="flex justify-between text-xs text-gray-400 mt-1">
+                                    <span>Low</span>
+                                    <span id="sensitivityVal">1.0</span>
+                                    <span>High</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Minimum Score Threshold</label>
+                                <input id="thresholdInput" type="number" min="20" max="80" value="50" 
+                                       class="w-full p-3 glass rounded-lg text-white border border-cyan-500/30 focus:border-cyan-400">
+                                <p class="text-xs text-gray-400 mt-1">Scores above this value are considered "good posture"</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-cyan-300 mb-4">Notifications</h4>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Reminder Cooldown (seconds)</label>
+                                <input id="cooldownInput" type="number" min="5" max="300" value="30" 
+                                       class="w-full p-3 glass rounded-lg text-white border border-cyan-500/30 focus:border-cyan-400">
+                            </div>
+                            <div>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input id="soundEnabledCheck" type="checkbox" class="rounded border-cyan-500/30 w-4 h-4">
+                                    <span class="text-cyan-300">Sound Notifications</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input id="autoBreakCheck" type="checkbox" class="rounded border-cyan-500/30 w-4 h-4">
+                                    <span class="text-cyan-300">Auto Break Reminders</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Break Reminder Interval (minutes)</label>
+                                <input id="breakIntervalInput" type="number" min="15" max="120" value="30" 
+                                       class="w-full p-3 glass rounded-lg text-white border border-cyan-500/30 focus:border-cyan-400">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-cyan-300 mb-4">Visual Settings</h4>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input id="showKeypointsCheck" type="checkbox" class="rounded border-cyan-500/30 w-4 h-4" checked>
+                                    <span class="text-cyan-300">Show Pose Keypoints</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input id="showSkeletonCheck" type="checkbox" class="rounded border-cyan-500/30 w-4 h-4">
+                                    <span class="text-cyan-300">Show Skeleton Lines</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Keypoint Size</label>
+                                <input id="keypointSizeRange" type="range" min="2" max="10" value="4" 
+                                       class="w-full h-2 bg-gradient-to-r from-cyan-400 to-purple-500 rounded-lg appearance-none cursor-pointer">
+                                <div class="flex justify-between text-xs text-gray-400 mt-1">
+                                    <span>Small</span>
+                                    <span id="keypointSizeVal">4</span>
+                                    <span>Large</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-cyan-300 mb-4">Performance</h4>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="flex items-center space-x-3 cursor-pointer">
+                                    <input id="adaptiveModeCheck" type="checkbox" class="rounded border-cyan-500/30 w-4 h-4" checked>
+                                    <span class="text-cyan-300">Adaptive Performance Mode</span>
+                                </label>
+                                <p class="text-xs text-gray-400 mt-1">Automatically adjusts FPS based on device performance</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm mb-2 text-gray-300">Model Type</label>
+                                <select id="modelTypeSelect" class="w-full p-3 glass rounded-lg text-white border border-cyan-500/30 focus:border-cyan-400 bg-transparent">
+                                    <option value="resnet50" class="bg-gray-800">ResNet50 (Better Accuracy)</option>
+                                    <option value="mobilenet" class="bg-gray-800">MobileNet (Better Performance)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between space-x-3 pt-4 border-t border-gray-600">
+                        <button id="resetSettingsBtn" class="cyber-button bg-gradient-to-r from-orange-600 to-orange-500">Reset to Defaults</button>
+                        <div class="flex space-x-3">
+                            <button id="cancelSettings" class="cyber-button bg-gradient-to-r from-gray-600 to-gray-500">Cancel</button>
+                            <button id="saveSettings" class="cyber-button">Save Changes</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="achievementsModal" class="fixed inset-0 hidden items-center justify-center bg-black/60 z-50 backdrop-blur-sm">
+            <div class="glass-strong p-8 w-[600px] max-h-[80vh] overflow-y-auto neon-glow hologram-effect">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-2xl title-glow">🏆 Achievements</h3>
+                    <button id="closeAchievements" class="text-gray-400 hover:text-white">✕</button>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="glass p-4 rounded-lg achievement-card unlocked">
+                        <div class="text-3xl mb-2">🎯</div>
+                        <h4 class="font-semibold text-cyan-300">First Session</h4>
+                        <p class="text-xs text-gray-400">Complete your first monitoring session</p>
+                        <div class="text-xs text-green-400 mt-2">✓ Unlocked</div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg achievement-card locked">
+                        <div class="text-3xl mb-2 grayscale">⏰</div>
+                        <h4 class="font-semibold text-gray-400">Early Bird</h4>
+                        <p class="text-xs text-gray-400">Start monitoring before 9 AM</p>
+                        <div class="text-xs text-gray-500 mt-2">🔒 Locked</div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg achievement-card locked">
+                        <div class="text-3xl mb-2 grayscale">🔥</div>
+                        <h4 class="font-semibold text-gray-400">Perfect Posture</h4>
+                        <p class="text-xs text-gray-400">Maintain 90%+ score for 30 minutes</p>
+                        <div class="text-xs text-gray-500 mt-2">🔒 Locked</div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg achievement-card locked">
+                        <div class="text-3xl mb-2 grayscale">📈</div>
+                        <h4 class="font-semibold text-gray-400">Streak Master</h4>
+                        <p class="text-xs text-gray-400">7-day good posture streak</p>
+                        <div class="text-xs text-gray-500 mt-2">🔒 Locked</div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg achievement-card locked">
+                        <div class="text-3xl mb-2 grayscale">🧘</div>
+                        <h4 class="font-semibold text-gray-400">Break Master</h4>
+                        <p class="text-xs text-gray-400">Complete 20 exercise breaks</p>
+                        <div class="text-xs text-gray-500 mt-2">🔒 Locked</div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg achievement-card locked">
+                        <div class="text-3xl mb-2 grayscale">🌟</div>
+                        <h4 class="font-semibold text-gray-400">Wellness Champion</h4>
+                        <p class="text-xs text-gray-400">Use app for 30 consecutive days</p>
+                        <div class="text-xs text-gray-500 mt-2">🔒 Locked</div>
+                    </div>
+                </div>
+                
+                <div class="mt-6 glass p-4 rounded-lg">
+                    <h4 class="font-semibold text-cyan-300 mb-2">Progress Overview</h4>
+                    <div class="flex justify-between text-sm">
+                        <span>Achievements Unlocked:</span>
+                        <span class="text-cyan-300">1 / 6</span>
+                    </div>
+                    <div class="w-full bg-gray-700 rounded-full h-2 mt-2">
+                        <div class="bg-gradient-to-r from-cyan-400 to-purple-500 h-2 rounded-full" style="width: 16.7%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Export Modal -->
+        <div id="exportModal" class="fixed inset-0 hidden items-center justify-center bg-black/60 z-50 backdrop-blur-sm">
+            <div class="glass-strong p-8 w-[500px] neon-glow hologram-effect">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-2xl title-glow">📊 Export Data</h3>
+                    <button id="closeExport" class="text-gray-400 hover:text-white">✕</button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="font-semibold text-cyan-300 mb-3">Export Options</h4>
+                        <div class="space-y-3">
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="exportType" value="csv" class="text-cyan-400" checked>
+                                <span>CSV (Excel/Sheets)</span>
+                            </label>
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="exportType" value="json" class="text-cyan-400">
+                                <span>JSON (Developers)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="glass p-4 rounded-lg">
+                        <h4 class="font-semibold text-cyan-300 mb-3">Date Range</h4>
+                        <div class="space-y-3">
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="dateRange" value="today" class="text-cyan-400" checked>
+                                <span>Today Only</span>
+                            </label>
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="dateRange" value="week" class="text-cyan-400">
+                                <span>Last 7 Days</span>
+                            </label>
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="dateRange" value="month" class="text-cyan-400">
+                                <span>Last 30 Days</span>
+                            </label>
+                            <label class="flex items-center space-x-3 cursor-pointer">
+                                <input type="radio" name="dateRange" value="all" class="text-cyan-400">
+                                <span>All Data</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-between space-x-3 pt-4 border-t border-gray-600">
+                        <button id="cancelExport" class="cyber-button bg-gradient-to-r from-gray-600 to-gray-500">Cancel</button>
+                        <button id="downloadExport" class="cyber-button">📥 Download</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
