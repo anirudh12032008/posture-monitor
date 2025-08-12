@@ -176,6 +176,7 @@ class PostureMonitor {
         document.getElementById('sensitivityVal').textContent = this.settings.sensitivity;
         document.getElementById('thresholdInput').value = this.settings.threshold;
         document.getElementById('showKeypointsCheck').checked = this.settings.showKeypoints;
+        document.getElementById('showVisualPointers').checked = this.settings.showKeypoints;
         document.getElementById('showSkeletonCheck').checked = this.settings.showSkeleton;
         document.getElementById('keypointSizeRange').value = this.settings.keypointSize;
         document.getElementById('keypointSizeVal').textContent = this.settings.keypointSize;
@@ -220,6 +221,19 @@ class PostureMonitor {
         document.getElementById('keypointSizeRange').addEventListener('input', (e) => {
             document.getElementById('keypointSizeVal').textContent = e.target.value;
         });
+        
+        document.getElementById('showKeypointsCheck').addEventListener('change', (e) => {
+            this.settings.showKeypoints = e.target.checked;
+            document.getElementById('showVisualPointers').checked = e.target.checked;
+            this.saveSettings();
+        });
+        
+        document.getElementById('showVisualPointers').addEventListener('change', (e) => {
+            this.settings.showKeypoints = e.target.checked;
+            document.getElementById('showKeypointsCheck').checked = e.target.checked;
+            this.saveSettings();
+        });
+        
         this.breakModal.addEventListener('click', (e) => {
             if (e.target === this.breakModal) this.endBreak('Break cancelled');
         });
@@ -380,6 +394,11 @@ class PostureMonitor {
     }
     drawKeypointsAndSkeleton(pose) {
         this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+        
+        if (!this.settings.showKeypoints) {
+            return;
+        }
+        
         this.ctx.lineWidth = 2;
         const keypoints = pose.keypoints.filter(k => k.score > 0.1);
         const videoWidth = this.video.videoWidth || this.video.clientWidth || 640;
@@ -388,34 +407,40 @@ class PostureMonitor {
         const canvasHeight = this.overlay.height;
         const scaleX = canvasWidth / videoWidth;
         const scaleY = canvasHeight / videoHeight;
-        const adjacentPairs = posenet.getAdjacentKeyPoints(pose.keypoints, 0.1);
-        this.ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-        this.ctx.lineWidth = 3;
-        adjacentPairs.forEach(pair => {
-            const x1 = pair[0].position.x * scaleX;
-            const y1 = pair[0].position.y * scaleY;
-            const x2 = pair[1].position.x * scaleX;
-            const y2 = pair[1].position.y * scaleY;
-            this.ctx.beginPath();
-            this.ctx.moveTo(x1, y1);
-            this.ctx.lineTo(x2, y2);
-            this.ctx.stroke();
-        });
+        
+        if (this.settings.showSkeleton) {
+            const adjacentPairs = posenet.getAdjacentKeyPoints(pose.keypoints, 0.1);
+            this.ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            this.ctx.lineWidth = 3;
+            adjacentPairs.forEach(pair => {
+                const x1 = pair[0].position.x * scaleX;
+                const y1 = pair[0].position.y * scaleY;
+                const x2 = pair[1].position.x * scaleX;
+                const y2 = pair[1].position.y * scaleY;
+                this.ctx.beginPath();
+                this.ctx.moveTo(x1, y1);
+                this.ctx.lineTo(x2, y2);
+                this.ctx.stroke();
+            });
+        }
+        
         pose.keypoints.forEach(k => {
             if (k.score > 0.05) {
                 const x = k.position.x * scaleX;
                 const y = k.position.y * scaleY;
                 this.ctx.beginPath();
                 this.ctx.fillStyle = `rgba(0,255,150,${k.score})`;
-                this.ctx.arc(x, y, 5, 0, Math.PI * 2);
+                this.ctx.arc(x, y, this.settings.keypointSize || 5, 0, Math.PI * 2);
                 this.ctx.fill();
                 this.ctx.fillStyle = 'white';
                 this.ctx.font = '10px Arial';
                 this.ctx.fillText(`${k.part}(${k.score.toFixed(2)})`, x + 8, y - 8);
             }
         });
+        
         const kp = {};
         pose.keypoints.forEach(k => kp[k.part] = k);
+        
         this.ctx.strokeStyle = 'rgba(0,255,0,0.9)';
         this.ctx.lineWidth = 4;
         this.ctx.setLineDash([8, 8]);
@@ -425,6 +450,7 @@ class PostureMonitor {
         this.ctx.lineTo(centerX, this.overlay.height);
         this.ctx.stroke();
         this.ctx.setLineDash([]);
+        
         if (kp.nose && kp.nose.score > 0.1) {
             const headX = kp.nose.position.x * scaleX;
             const headY = kp.nose.position.y * scaleY;
@@ -439,11 +465,13 @@ class PostureMonitor {
             this.ctx.font = '11px Arial';
             this.ctx.fillText('Head', headX + 15, headY - 10);
         }
+        
         if (kp.leftShoulder && kp.rightShoulder && kp.leftShoulder.score > 0.1 && kp.rightShoulder.score > 0.1) {
             const leftShoulderX = kp.leftShoulder.position.x * scaleX;
             const leftShoulderY = kp.leftShoulder.position.y * scaleY;
             const rightShoulderX = kp.rightShoulder.position.x * scaleX;
             const rightShoulderY = kp.rightShoulder.position.y * scaleY;
+            
             this.ctx.beginPath();
             this.ctx.fillStyle = 'rgba(80,150,255,0.8)';
             this.ctx.strokeStyle = 'rgba(255,255,255,0.9)';
@@ -455,6 +483,7 @@ class PostureMonitor {
             this.ctx.arc(rightShoulderX, rightShoulderY, 10, 0, Math.PI * 2);
             this.ctx.fill();
             this.ctx.stroke();
+            
             const shoulderMidX = (leftShoulderX + rightShoulderX) / 2;
             const shoulderMidY = (leftShoulderY + rightShoulderY) / 2;
             this.ctx.beginPath();
@@ -463,17 +492,21 @@ class PostureMonitor {
             this.ctx.arc(shoulderMidX, shoulderMidY, 8, 0, Math.PI * 2);
             this.ctx.fill();
             this.ctx.stroke();
+            
             this.ctx.beginPath();
             this.ctx.strokeStyle = 'rgba(255,200,80,0.7)';
             this.ctx.lineWidth = 3;
             this.ctx.moveTo(leftShoulderX, leftShoulderY);
             this.ctx.lineTo(rightShoulderX, rightShoulderY);
             this.ctx.stroke();
+            
+            // Draw labels
             this.ctx.fillStyle = 'rgba(255,255,255,0.9)';
             this.ctx.font = '11px Arial';
             this.ctx.fillText('L', leftShoulderX - 15, leftShoulderY - 12);
             this.ctx.fillText('R', rightShoulderX + 12, rightShoulderY - 12);
         }
+        
         this.ctx.lineWidth = 2;
     }
     analyzePose(pose) {
