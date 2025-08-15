@@ -49,6 +49,8 @@ class PostureMonitor {
         this.logList = document.getElementById('logList');
         this.fpsRange = document.getElementById('fpsRange');
         this.fpsVal = document.getElementById('fpsVal');
+        this.frameIntervalRange = document.getElementById('frameIntervalRange');
+        this.frameIntervalVal = document.getElementById('frameIntervalVal');
         this.todayGood = document.getElementById('todayGood');
         this.todayPoor = document.getElementById('todayPoor');
         this.achievementsBtn = document.getElementById('achievementsBtn');
@@ -57,6 +59,16 @@ class PostureMonitor {
         this.exportDataBtn = document.getElementById('exportDataBtn');
         this.exportModal = document.getElementById('exportModal');
         this.closeExport = document.getElementById('closeExport');
+        
+        this.performanceToggle = document.getElementById('performanceToggle');
+        this.performanceWidget = document.getElementById('performanceWidget');
+        this.closePerformance = document.getElementById('closePerformance');
+        this.realTimeFPS = document.getElementById('realTimeFPS');
+        this.avgDetectionTime = document.getElementById('avgDetectionTime');
+        this.autoAdjustStatus = document.getElementById('autoAdjustStatus');
+        this.performanceStatus = document.getElementById('performanceStatus');
+        
+        this.exportBtn = document.getElementById('exportBtn');
     }
     initializeState() {
         this.model = null;
@@ -76,7 +88,11 @@ class PostureMonitor {
             avgDetectionTime: 0,
             frameCount: 0,
             lastFiveFrames: [],
-            adaptiveMode: true
+            adaptiveMode: true,
+            realTimeFPS: 0,
+            fpsCounter: 0,
+            lastFPSTime: performance.now(),
+            autoAdjustEnabled: false
         };
         this.stats = this.loadStats();
         this.settings = {
@@ -90,10 +106,14 @@ class PostureMonitor {
             showSkeleton: true,
             keypointSize: 4,
             adaptiveMode: true,
-            modelType: 'resnet50'
+            modelType: 'resnet50',
+            frameProcessInterval: 5  
         };
+        this.lastFrameProcessTime = 0; 
+        this.lastPose = null; 
         this.baselinePose = this.loadBaselinePose();
         this.fpsVal.textContent = this.fpsRange.value;
+        this.frameIntervalVal.textContent = this.settings.frameProcessInterval;
         this.exercises = [
             { name: 'neck rolls', duration: 30 },
             { name: 'shoulder shrugs', duration: 30 },
@@ -182,6 +202,8 @@ class PostureMonitor {
         document.getElementById('keypointSizeVal').textContent = this.settings.keypointSize;
         document.getElementById('adaptiveModeCheck').checked = this.settings.adaptiveMode;
         document.getElementById('modelTypeSelect').value = this.settings.modelType;
+        this.frameIntervalRange.value = this.settings.frameProcessInterval;
+        this.frameIntervalVal.textContent = this.settings.frameProcessInterval;
     }
     setupEventListeners() {
         this.startBtn.addEventListener('click', () => this.startCamera());
@@ -193,6 +215,11 @@ class PostureMonitor {
         this.fpsRange.addEventListener('input', (e) => {
             this.detectionInterval = 1000 / Number(e.target.value);
             this.fpsVal.textContent = e.target.value;
+        });
+        this.frameIntervalRange.addEventListener('input', (e) => {
+            this.settings.frameProcessInterval = Number(e.target.value);
+            this.frameIntervalVal.textContent = e.target.value;
+            this.saveSettings();
         });
         document.getElementById('breakBtn').addEventListener('click', () => this.startBreak());
         document.getElementById('refreshPermissions').addEventListener('click', () => this.refreshCameraPermissions());
@@ -240,6 +267,27 @@ class PostureMonitor {
         this.settingsModal.addEventListener('click', (e) => {
             if (e.target === this.settingsModal) this.hideSettings();
         });
+        
+        if (this.performanceToggle) {
+            this.performanceToggle.addEventListener('click', () => this.togglePerformanceWidget());
+        }
+        if (this.closePerformance) {
+            this.closePerformance.addEventListener('click', () => this.hidePerformanceWidget());
+        }
+        
+        if (this.exportBtn) {
+            this.exportBtn.addEventListener('click', () => this.showExportModal());
+        }
+        
+        const cancelExportBtn = document.getElementById('cancelExport');
+        const downloadExportBtn = document.getElementById('downloadExport');
+        
+        if (cancelExportBtn) {
+            cancelExportBtn.addEventListener('click', () => this.hideExportModal());
+        }
+        if (downloadExportBtn) {
+            downloadExportBtn.addEventListener('click', () => this.downloadExportData());
+        }
     }
     async requestNotificationPermission() {
         if ('Notification' in window && Notification.permission === 'default') {
@@ -500,7 +548,6 @@ class PostureMonitor {
             this.ctx.lineTo(rightShoulderX, rightShoulderY);
             this.ctx.stroke();
             
-            // Draw labels
             this.ctx.fillStyle = 'rgba(255,255,255,0.9)';
             this.ctx.font = '11px Arial';
             this.ctx.fillText('L', leftShoulderX - 15, leftShoulderY - 12);
@@ -512,14 +559,17 @@ class PostureMonitor {
     analyzePose(pose) {
         const kp = {};
         pose.keypoints.forEach(k => kp[k.part] = k);
-        let score = 40;
+        
+        let score = 55;
         let debugInfo = { components: [] };
+        
         const requiredParts = ['nose', 'leftShoulder', 'rightShoulder'];
         for (let part of requiredParts) {
-            if (!kp[part] || kp[part].score < 0.2) {
-                return { score: 35, category: 'Poor', reason: 'low_confidence' };
+            if (!kp[part] || kp[part].score < 0.25) {
+                return { score: 25, category: 'Poor', reason: 'low_confidence' };
             }
         }
+        
         const nose = kp.nose.position;
         const leftShoulder = kp.leftShoulder.position;
         const rightShoulder = kp.rightShoulder.position;
@@ -527,20 +577,25 @@ class PostureMonitor {
             x: (leftShoulder.x + rightShoulder.x) / 2,
             y: (leftShoulder.y + rightShoulder.y) / 2
         };
+        
         const shoulderWidth = Math.abs(leftShoulder.x - rightShoulder.x);
         const headOffsetX = Math.abs(nose.x - shoulderMid.x);
-        const headOffsetRatio = headOffsetX / (shoulderWidth || 100);
+        const headOffsetRatio = headOffsetX / (shoulderWidth || 120);
+        
         let headAlignScore = 0;
-        if (headOffsetRatio < 0.15) {
-            headAlignScore = 20;
-            debugInfo.components.push('Perfect head alignment (+20)');
-        } else if (headOffsetRatio < 0.3) {
-            headAlignScore = 12;
-            debugInfo.components.push('Good head alignment (+12)');
-        } else if (headOffsetRatio < 0.5) {
-            headAlignScore = 5;
-            debugInfo.components.push('Fair head alignment (+5)');
-        } else if (headOffsetRatio < 0.7) {
+        if (headOffsetRatio < 0.08) {
+            headAlignScore = 25;
+            debugInfo.components.push('Perfect head alignment (+25)');
+        } else if (headOffsetRatio < 0.18) {
+            headAlignScore = 18;
+            debugInfo.components.push('Excellent head alignment (+18)');
+        } else if (headOffsetRatio < 0.35) {
+            headAlignScore = 10;
+            debugInfo.components.push('Good head alignment (+10)');
+        } else if (headOffsetRatio < 0.50) {
+            headAlignScore = 3;
+            debugInfo.components.push('Fair head alignment (+3)');
+        } else if (headOffsetRatio < 0.70) {
             headAlignScore = -8;
             debugInfo.components.push('Poor head alignment (-8)');
         } else {
@@ -548,90 +603,127 @@ class PostureMonitor {
             debugInfo.components.push('Very poor head alignment (-20)');
         }
         score += headAlignScore;
-        const headVerticalOffset = nose.y - shoulderMid.y;
-        const neckIdealPosition = shoulderWidth * 0.25;
+        
+        const headVerticalOffset = Math.abs(nose.y - shoulderMid.y);
+        const referenceDistance = shoulderWidth * 0.35; 
         let forwardHeadScore = 0;
-        if (headVerticalOffset < -neckIdealPosition * 0.3) {
-            forwardHeadScore = 20;
-            debugInfo.components.push('Excellent head position (+20)');
-        } else if (headVerticalOffset < neckIdealPosition * 0.3) {
-            forwardHeadScore = 12;
-            debugInfo.components.push('Good head position (+12)');
-        } else if (headVerticalOffset < neckIdealPosition * 1.0) {
-            forwardHeadScore = 2;
-            debugInfo.components.push('Slightly forward head (+2)');
-        } else if (headVerticalOffset < neckIdealPosition * 2.0) {
+        
+        if (headVerticalOffset < referenceDistance * 0.4) {
+            forwardHeadScore = 25;
+            debugInfo.components.push('Excellent head position (+25)');
+        } else if (headVerticalOffset < referenceDistance * 0.8) {
+            forwardHeadScore = 15;
+            debugInfo.components.push('Good head position (+15)');
+        } else if (headVerticalOffset < referenceDistance * 1.2) {
+            forwardHeadScore = 5;
+            debugInfo.components.push('Slight forward head (+5)');
+        } else if (headVerticalOffset < referenceDistance * 1.8) {
             forwardHeadScore = -10;
             debugInfo.components.push('Forward head posture (-10)');
         } else {
-            forwardHeadScore = -20;
-            debugInfo.components.push('Severe forward head (-20)');
+            forwardHeadScore = -25;
+            debugInfo.components.push('Severe forward head (-25)');
         }
         score += forwardHeadScore;
+        
         const shoulderLevelDiff = Math.abs(leftShoulder.y - rightShoulder.y);
         let shoulderLevelScore = 0;
-        if (shoulderLevelDiff < 8) {
-            shoulderLevelScore = 15;
-            debugInfo.components.push('Perfect shoulder level (+15)');
-        } else if (shoulderLevelDiff < 18) {
-            shoulderLevelScore = 8;
-            debugInfo.components.push('Good shoulder level (+8)');
-        } else if (shoulderLevelDiff < 30) {
-            shoulderLevelScore = 2;
-            debugInfo.components.push('Slightly uneven shoulders (+2)');
-        } else if (shoulderLevelDiff < 45) {
-            shoulderLevelScore = -5;
-            debugInfo.components.push('Uneven shoulders (-5)');
+        
+        if (shoulderLevelDiff < 6) {
+            shoulderLevelScore = 20;
+            debugInfo.components.push('Perfect shoulder level (+20)');
+        } else if (shoulderLevelDiff < 15) {
+            shoulderLevelScore = 12;
+            debugInfo.components.push('Good shoulder level (+12)');
+        } else if (shoulderLevelDiff < 25) {
+            shoulderLevelScore = 5;
+            debugInfo.components.push('Slight shoulder tilt (+5)');
+        } else if (shoulderLevelDiff < 40) {
+            shoulderLevelScore = -8;
+            debugInfo.components.push('Uneven shoulders (-8)');
         } else {
-            shoulderLevelScore = -15;
-            debugInfo.components.push('Very uneven shoulders (-15)');
+            shoulderLevelScore = -20;
+            debugInfo.components.push('Very uneven shoulders (-20)');
         }
         score += shoulderLevelScore;
-        const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
-        const relativeShoulderPosition = (nose.y - avgShoulderY) / (shoulderWidth || 100);
-        let slouchScore = 0;
-        if (relativeShoulderPosition > 0.9) {
-            slouchScore = 15;
-            debugInfo.components.push('Excellent posture, chest up (+15)');
-        } else if (relativeShoulderPosition > 0.6) {
-            slouchScore = 8;
-            debugInfo.components.push('Good shoulder position (+8)');
-        } else if (relativeShoulderPosition > 0.3) {
-            slouchScore = 2;
-            debugInfo.components.push('Neutral shoulder position (+2)');
-        } else if (relativeShoulderPosition > 0.0) {
-            slouchScore = -5;
-            debugInfo.components.push('Slightly slouched (-5)');
+        
+        const neckLength = Math.abs(nose.y - shoulderMid.y);
+        const uprightRatio = neckLength / (shoulderWidth || 120);
+        let postureScore = 0;
+        
+        if (uprightRatio > 0.8) {
+            postureScore = 20;
+            debugInfo.components.push('Excellent upright posture (+20)');
+        } else if (uprightRatio > 0.6) {
+            postureScore = 12;
+            debugInfo.components.push('Good upright posture (+12)');
+        } else if (uprightRatio > 0.4) {
+            postureScore = 5;
+            debugInfo.components.push('Neutral posture (+5)');
+        } else if (uprightRatio > 0.25) {
+            postureScore = -8;
+            debugInfo.components.push('Slightly slouched (-8)');
         } else {
-            slouchScore = -15;
-            debugInfo.components.push('Heavily slouched (-15)');
+            postureScore = -20;
+            debugInfo.components.push('Poor slouched posture (-20)');
         }
-        score += slouchScore;
+        score += postureScore;
+        
+        let shoulderAngleScore = 0;
+        if (kp.leftElbow && kp.rightElbow && kp.leftElbow.score > 0.3 && kp.rightElbow.score > 0.3) {
+            const leftElbow = kp.leftElbow.position;
+            const rightElbow = kp.rightElbow.position;
+            
+            const leftElbowBehind = leftElbow.x > leftShoulder.x;
+            const rightElbowBehind = rightElbow.x < rightShoulder.x;
+            
+            if (leftElbowBehind && rightElbowBehind) {
+                shoulderAngleScore = 15;
+                debugInfo.components.push('Excellent shoulder position (+15)');
+            } else if (leftElbowBehind || rightElbowBehind) {
+                shoulderAngleScore = 8;
+                debugInfo.components.push('Good shoulder position (+8)');
+            } else {
+                shoulderAngleScore = -10;
+                debugInfo.components.push('Rounded shoulders (-10)');
+            }
+        } else {
+            shoulderAngleScore = 0;
+            debugInfo.components.push('Shoulder angle not detectable (0)');
+        }
+        score += shoulderAngleScore;
+        
         const avgConfidence = pose.keypoints.reduce((sum, kp) => sum + kp.score, 0) / pose.keypoints.length;
         let confScore = 0;
-        if (avgConfidence < 0.3) {
+        if (avgConfidence < 0.4) {
             confScore = -5;
             debugInfo.components.push('Poor detection quality (-5)');
-        } else if (avgConfidence > 0.8) {
+        } else if (avgConfidence > 0.85) {
             confScore = 5;
             debugInfo.components.push('Excellent detection quality (+5)');
+        } else if (avgConfidence > 0.65) {
+            confScore = 2;
+            debugInfo.components.push('Good detection quality (+2)');
         }
         score += confScore;
-        score = Math.max(30, Math.min(100, Math.round(score)));
+        
+        score = Math.max(20, Math.min(100, Math.round(score)));
+        
         let category = 'Fair';
-        if (score >= 85) category = 'Excellent';
-        else if (score >= 70) category = 'Good';
-        else if (score >= 55) category = 'Fair';
+        if (score >= 88) category = 'Excellent';
+        else if (score >= 75) category = 'Good';
+        else if (score >= 60) category = 'Fair';
         else category = 'Poor';
+        
         return {
             score,
             category,
             debugInfo,
             details: {
-                headAlignment: Math.round(100 - (headOffsetRatio * 100)),
-                forwardHead: Math.round(Math.max(0, 100 - (Math.abs(headVerticalOffset) / 50 * 100))),
-                shoulderLevel: Math.round(Math.max(0, 100 - (shoulderLevelDiff / 30 * 100))),
-                spinalAlignment: Math.round(Math.max(0, 100 - (Math.abs(relativeShoulderPosition) * 50))),
+                headAlignment: Math.round(Math.max(0, 100 - (headOffsetRatio * 150))),
+                forwardHead: Math.round(Math.max(0, 100 - (headVerticalOffset / referenceDistance * 60))),
+                shoulderLevel: Math.round(Math.max(0, 100 - (shoulderLevelDiff / 40 * 100))),
+                shoulderPosture: Math.round(Math.max(0, uprightRatio * 100)),
                 confidence: Math.round(avgConfidence * 100)
             }
         };
@@ -639,13 +731,13 @@ class PostureMonitor {
     updateUIFromScore(result) {
         this.scoreText.textContent = `${result.score}`;
         this.scoreBar.style.width = `${result.score}%`;
-        if (result.score >= 85) {
+        if (result.score >= 88) {
             this.scoreBar.style.background = 'linear-gradient(90deg, rgba(16,185,129,0.9), rgba(5,150,105,0.9))';
             this.statusIndicator.textContent = 'Status: Excellent Posture';
-        } else if (result.score >= 70) {
+        } else if (result.score >= 75) {
             this.scoreBar.style.background = 'linear-gradient(90deg, rgba(34,197,94,0.9), rgba(16,185,129,0.9))';
             this.statusIndicator.textContent = 'Status: Good Posture';
-        } else if (result.score >= 55) {
+        } else if (result.score >= 60) {
             this.scoreBar.style.background = 'linear-gradient(90deg, rgba(234,179,8,0.9), rgba(250,204,21,0.9))';
             this.statusIndicator.textContent = 'Status: Fair Posture';
         } else {
@@ -668,6 +760,11 @@ class PostureMonitor {
             return;
         }
         this.lastTick = now;
+        
+        const currentTime = Date.now();
+        const frameProcessIntervalMs = this.settings.frameProcessInterval * 1000;
+        const shouldProcessFrame = (currentTime - this.lastFrameProcessTime) >= frameProcessIntervalMs;
+        
         try {
             const videoWidth = this.video.videoWidth || 640;
             const videoHeight = this.video.videoHeight || 480;
@@ -675,79 +772,103 @@ class PostureMonitor {
                 this.tempCanvas.width = videoWidth;
                 this.tempCanvas.height = videoHeight;
             }
-            this.tempCtx.drawImage(this.video, 0, 0, videoWidth, videoHeight);
-            let pose;
-            try {
-                pose = await this.model.estimateSinglePose(this.tempCanvas, {
-                    flipHorizontal: false,
-                    imageScaleFactor: 0.7,
-                    outputStride: 32,
-                    maxDetections: 1,
-                    scoreThreshold: 0.2,
-                    nmsRadius: 20
-                });
-            } catch (poseError) {
-                console.error('ResNet50 pose estimation failed, trying standard settings:', poseError);
+            
+            let pose = this.lastPose;
+            if (shouldProcessFrame) {
+                this.lastFrameProcessTime = currentTime;
+                
+                const detectionStart = performance.now();
+                
+                this.tempCtx.drawImage(this.video, 0, 0, videoWidth, videoHeight);
+                
                 try {
                     pose = await this.model.estimateSinglePose(this.tempCanvas, {
                         flipHorizontal: false,
-                        imageScaleFactor: 0.5,
-                        outputStride: 16
+                        imageScaleFactor: 0.7,
+                        outputStride: 32,
+                        maxDetections: 1,
+                        scoreThreshold: 0.2,
+                        nmsRadius: 20
                     });
-                } catch (fallbackError) {
-                    console.error('Standard pose estimation failed, trying minimal:', fallbackError);
-                    pose = await this.model.estimateSinglePose(this.tempCanvas);
+                } catch (poseError) {
+                    console.error('ResNet50 pose estimation failed, trying standard settings:', poseError);
+                    try {
+                        pose = await this.model.estimateSinglePose(this.tempCanvas, {
+                            flipHorizontal: false,
+                            imageScaleFactor: 0.5,
+                            outputStride: 16
+                        });
+                    } catch (fallbackError) {
+                        console.error('Standard pose estimation failed, trying minimal:', fallbackError);
+                        pose = await this.model.estimateSinglePose(this.tempCanvas);
+                    }
                 }
-            }
-            const validKeypoints = pose.keypoints.filter(kp =>
-                kp.position &&
-                typeof kp.position.x === 'number' &&
-                typeof kp.position.y === 'number' &&
-                !isNaN(kp.position.x) &&
-                !isNaN(kp.position.y) &&
-                kp.position.x !== 0 &&
-                kp.position.y !== 0
-            );
-            if (validKeypoints.length > 0) {
-            } else {
-                if (Math.random() < 0.01) {
-                    console.warn('NO VALID KEYPOINTS FOUND - all coordinates are 0,0 or invalid');
+                
+                const detectionEnd = performance.now();
+                const detectionTime = detectionEnd - detectionStart;
+                this.updatePerformanceStats(detectionTime);
+                
+                const validKeypoints = pose.keypoints.filter(kp =>
+                    kp.position &&
+                    typeof kp.position.x === 'number' &&
+                    typeof kp.position.y === 'number' &&
+                    !isNaN(kp.position.x) &&
+                    !isNaN(kp.position.y) &&
+                    kp.position.x !== 0 &&
+                    kp.position.y !== 0
+                );
+                
+                if (validKeypoints.length === 0) {
+                    if (Math.random() < 0.01) {
+                        console.warn('NO VALID KEYPOINTS FOUND - all coordinates are 0,0 or invalid');
+                    }
+                    try {
+                        pose = await this.model.estimateSinglePose(this.tempCanvas);
+                    } catch (fallbackError) {
+                        console.error('All pose estimation methods failed:', fallbackError);
+                    }
                 }
-                try {
-                    pose = await this.model.estimateSinglePose(this.tempCanvas);
-                } catch (fallbackError) {
-                    console.error('All pose estimation methods failed:', fallbackError);
+                
+                this.lastPose = pose;
+                this.poseHistory.push({ t: Date.now(), pose });
+                if (this.poseHistory.length > this.MAX_HISTORY) this.poseHistory.shift();
+            }
+            
+            if (pose) {
+                this.drawKeypointsAndSkeleton(pose);
+                const result = this.analyzePose(pose);
+                this.updateUIFromScore(result);
+                this.updateDebugInfo(result);
+                
+                if (!this.lastTrackingTime) {
+                    this.lastTrackingTime = Date.now();
                 }
-            }
-            this.poseHistory.push({ t: Date.now(), pose });
-            if (this.poseHistory.length > this.MAX_HISTORY) this.poseHistory.shift();
-            this.drawKeypointsAndSkeleton(pose);
-            const result = this.analyzePose(pose);
-            this.updateUIFromScore(result);
-            this.updateDebugInfo(result);
-            if (!this.lastTrackingTime) {
-                this.lastTrackingTime = Date.now();
-            }
-            const now = Date.now();
-            if (now - this.lastTrackingTime >= 1000) {
-                if (result.score > 60) {
-                    this.stats.goodSeconds += 1;
-                } else {
-                    this.stats.poorSeconds += 1;
+                const now = Date.now();
+                if (now - this.lastTrackingTime >= 1000) {
+                    if (result.score >= 70) {
+                        this.stats.goodSeconds += 1;
+                    } else {
+                        this.stats.poorSeconds += 1;
+                    }
+                    this.lastTrackingTime = now;
+                    this.updateStatsDisplay();
+                    this.saveStats();
+                    this.checkAchievements();
                 }
-                this.lastTrackingTime = now;
-                this.updateStatsDisplay();
-                this.saveStats();
-                this.checkAchievements();
-            }
-            if (result.score < 55 && Date.now() > this.poorCooldownUntil) {
-                this.poorCooldownUntil = Date.now() + (this.settings.reminderCooldown * 1000);
-                this.showNotification('Posture Reminder', 'Poor posture detected - try adjusting your position');
-                this.logActivity(`Poor posture detected (${result.score})`);
+                if (result.score < 60 && Date.now() > this.poorCooldownUntil) {
+                    this.poorCooldownUntil = Date.now() + (this.settings.reminderCooldown * 1000);
+                    this.showNotification('Posture Reminder', 'Poor posture detected - try adjusting your position');
+                    this.logActivity(`Poor posture detected (${result.score})`);
+                }
             }
         } catch (error) {
             console.error('Pose detection error:', error);
         }
+        
+        this.updateFPSTracking();
+        
+        this.updatePerformanceWidget();
+        
         requestAnimationFrame(() => this.runDetectionLoop());
     }
     updateLogList() {
@@ -935,13 +1056,13 @@ class PostureMonitor {
           <strong>Final Score: ${result.score}/100</strong><br>
           <strong>Category: ${result.category}</strong><br><br>
           <strong>Score Breakdown:</strong><br>
-          ${componentBreakdown || __STRING_0_278__}<br><br>
+          ${componentBreakdown || 'No detailed breakdown available'}<br><br>
           <strong>Detection Quality:</strong><br>
           • Confidence: ${result.details.confidence}%<br>
           • Head Alignment: ${result.details.headAlignment}%<br>
           • Forward Head: ${result.details.forwardHead}%<br>
           • Shoulder Level: ${result.details.shoulderLevel}%<br>
-          • Spinal Alignment: ${result.details.spinalAlignment}%
+          • Shoulder Posture: ${result.details.shoulderPosture}%
         `;
     }
     updateDebugInfo(result) {
@@ -993,7 +1114,7 @@ class PostureMonitor {
             const recentScores = this.poseHistory.slice(-3000);
             if (recentScores.length >= 3000) {
                 const avgScore = recentScores.reduce((sum, entry) => sum + (entry.score || 0), 0) / recentScores.length;
-                if (avgScore >= 75) {
+                if (avgScore >= 85) {
                     this.unlockAchievement('perfectPosture', 'Perfect Posture - Maintain 90%+ score for 50 minutes!');
                     newAchievements.push('perfectPosture');
                 }
@@ -1096,18 +1217,20 @@ class PostureMonitor {
             const isUnlocked = this.achievements[achievement.id] && this.achievements[achievement.id].unlocked;
             const progress = this.achievements[achievement.id] && this.achievements[achievement.id].progress || 0;
             const card = document.createElement('div');
-            card.className = `glass p-4 rounded-lg achievement-card ${isUnlocked ? __STRING_0_340__ : __STRING_0_341__}`;
+            card.className = `glass p-4 rounded-lg achievement-card ${isUnlocked ? 'unlocked' : 'locked'}`;
+            
             let progressText = '';
             if (!isUnlocked && (achievement.id === 'breakMaster' || achievement.id === 'wellnessChampion')) {
                 const total = achievement.id === 'breakMaster' ? 3 : 30;
-                progressText = `<div class=__STRING_1_361__>Progress: ${progress}/${total}</div>`;
+                progressText = `<div class="text-xs text-gray-400">Progress: ${progress}/${total}</div>`;
             }
+            
             card.innerHTML = `
-                        <div class=__STRING_1_362__>${achievement.icon}</div>
-                        <h4 class=__STRING_1_363__>${achievement.name}</h4>
-                        <p class=__STRING_1_364__>${achievement.desc}</p>
-                        <div class=__STRING_1_365__>
-                            ${isUnlocked ? __STRING_0_352__ : __STRING_0_353__}
+                        <div class="text-2xl mb-2">${achievement.icon}</div>
+                        <h4 class="font-semibold mb-1">${achievement.name}</h4>
+                        <p class="text-sm text-gray-400 mb-2">${achievement.desc}</p>
+                        <div class="text-xs">
+                            ${isUnlocked ? '<span class="text-green-400">✓ Unlocked</span>' : '<span class="text-gray-500">🔒 Locked</span>'}
                         </div>
                         ${progressText}
                     `;
@@ -1133,6 +1256,200 @@ class PostureMonitor {
             this.exportModal.classList.add('hidden');
             this.exportModal.classList.remove('flex');
         }
+    }
+    
+    togglePerformanceWidget() {
+        if (this.performanceWidget) {
+            if (this.performanceWidget.classList.contains('hidden')) {
+                this.showPerformanceWidget();
+            } else {
+                this.hidePerformanceWidget();
+            }
+        }
+    }
+    
+    showPerformanceWidget() {
+        if (this.performanceWidget) {
+            this.performanceWidget.classList.remove('hidden');
+            this.updatePerformanceWidget();
+        }
+    }
+    
+    hidePerformanceWidget() {
+        if (this.performanceWidget) {
+            this.performanceWidget.classList.add('hidden');
+        }
+    }
+    
+    updatePerformanceWidget() {
+        if (!this.performanceWidget || this.performanceWidget.classList.contains('hidden')) return;
+        
+        if (this.realTimeFPS) {
+            this.realTimeFPS.textContent = Math.round(this.performanceStats.realTimeFPS);
+        }
+        
+        if (this.avgDetectionTime) {
+            this.avgDetectionTime.textContent = Math.round(this.performanceStats.avgDetectionTime) + 'ms';
+        }
+        
+        if (this.autoAdjustStatus) {
+            this.autoAdjustStatus.textContent = this.performanceStats.autoAdjustEnabled ? 'ON' : 'OFF';
+            this.autoAdjustStatus.className = this.performanceStats.autoAdjustEnabled ? 'text-green-400' : 'text-yellow-400';
+        }
+        
+        if (this.performanceStatus) {
+            const fps = this.performanceStats.realTimeFPS;
+            const detectionTime = this.performanceStats.avgDetectionTime;
+            
+            let status = 'Normal';
+            let statusClass = 'text-cyan-400';
+            
+            if (fps < 15 || detectionTime > 200) {
+                status = 'Poor';
+                statusClass = 'text-red-400';
+            } else if (fps < 20 || detectionTime > 100) {
+                status = 'Fair';
+                statusClass = 'text-yellow-400';
+            } else if (fps > 25 && detectionTime < 50) {
+                status = 'Excellent';
+                statusClass = 'text-green-400';
+            }
+            
+            this.performanceStatus.textContent = status;
+            this.performanceStatus.className = statusClass;
+        }
+    }
+    
+    updatePerformanceStats(detectionTime) {
+        this.performanceStats.frameCount++;
+        
+        // Update detection time average
+        this.performanceStats.lastFiveFrames.push(detectionTime);
+        if (this.performanceStats.lastFiveFrames.length > 5) {
+            this.performanceStats.lastFiveFrames.shift();
+        }
+        
+        this.performanceStats.avgDetectionTime = 
+            this.performanceStats.lastFiveFrames.reduce((sum, time) => sum + time, 0) / 
+            this.performanceStats.lastFiveFrames.length;
+        
+        if (this.settings.adaptiveMode && this.performanceStats.avgDetectionTime > 150) {
+            this.autoAdjustPerformance();
+        }
+    }
+    
+    updateFPSTracking() {
+        const now = performance.now();
+        this.performanceStats.fpsCounter++;
+        
+        if (now - this.performanceStats.lastFPSTime >= 1000) {
+            this.performanceStats.realTimeFPS = this.performanceStats.fpsCounter;
+            this.performanceStats.fpsCounter = 0;
+            this.performanceStats.lastFPSTime = now;
+        }
+    }
+    
+    autoAdjustPerformance() {
+        if (!this.performanceStats.autoAdjustEnabled) {
+            this.performanceStats.autoAdjustEnabled = true;
+            
+            const currentFPS = parseInt(this.fpsRange.value);
+            if (currentFPS > 10) {
+                this.fpsRange.value = Math.max(5, currentFPS - 5);
+                this.fpsVal.textContent = this.fpsRange.value;
+                this.detectionInterval = 1000 / Number(this.fpsRange.value);
+                this.logActivity('Auto-adjusted: Reduced FPS for better performance');
+            }
+        }
+    }
+    
+    downloadExportData() {
+        const formatRadios = document.querySelectorAll('input[name="format"]');
+        const dateRangeRadios = document.querySelectorAll('input[name="dateRange"]');
+        
+        let selectedFormat = 'json';
+        let selectedRange = 'today';
+        
+        formatRadios.forEach(radio => {
+            if (radio.checked) selectedFormat = radio.value;
+        });
+        
+        dateRangeRadios.forEach(radio => {
+            if (radio.checked) selectedRange = radio.value;
+        });
+        
+        const exportData = this.prepareExportData(selectedRange);
+        
+        if (selectedFormat === 'csv') {
+            this.downloadCSV(exportData);
+        } else {
+            this.downloadJSON(exportData);
+        }
+        
+        this.logActivity(`Data exported as ${selectedFormat.toUpperCase()}`);
+        this.hideExportModal();
+    }
+    
+    prepareExportData(dateRange) {
+        const now = new Date();
+        const data = {
+            exportDate: now.toISOString(),
+            dateRange: dateRange,
+            stats: this.stats,
+            achievements: this.achievements,
+            settings: this.settings
+        };
+        
+        if (dateRange === 'week') {
+            data.description = 'Last 7 days of posture data';
+        } else if (dateRange === 'month') {
+            data.description = 'Last 30 days of posture data';
+        } else if (dateRange === 'today') {
+            data.description = 'Today\'s posture data';
+        } else {
+            data.description = 'All posture monitoring data';
+        }
+        
+        return data;
+    }
+    
+    downloadJSON(data) {
+        const jsonString = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `posture-data-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+    
+    downloadCSV(data) {
+        let csvContent = 'Date,Good Seconds,Poor Seconds,Total Sessions,Activity\n';
+        
+        csvContent += `${data.stats.date},${data.stats.goodSeconds},${data.stats.poorSeconds},${data.stats.totalSessionSeconds},\n`;
+        
+        if (data.stats.logs) {
+            data.stats.logs.forEach(log => {
+                const date = new Date(log.t).toISOString().slice(0, 10);
+                const time = new Date(log.t).toLocaleTimeString();
+                csvContent += `${date},,,,${time}: ${log.msg.replace(/,/g, ';')}\n`;
+            });
+        }
+        
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `posture-data-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 }
 document.addEventListener('DOMContentLoaded', () => {
