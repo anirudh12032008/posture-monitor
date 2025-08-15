@@ -1364,29 +1364,18 @@ class PostureMonitor {
     }
     
     downloadExportData() {
-        const formatRadios = document.querySelectorAll('input[name="format"]');
         const dateRangeRadios = document.querySelectorAll('input[name="dateRange"]');
         
-        let selectedFormat = 'json';
         let selectedRange = 'today';
-        
-        formatRadios.forEach(radio => {
-            if (radio.checked) selectedFormat = radio.value;
-        });
         
         dateRangeRadios.forEach(radio => {
             if (radio.checked) selectedRange = radio.value;
         });
         
         const exportData = this.prepareExportData(selectedRange);
+        this.downloadJSON(exportData);
         
-        if (selectedFormat === 'csv') {
-            this.downloadCSV(exportData);
-        } else {
-            this.downloadJSON(exportData);
-        }
-        
-        this.logActivity(`Data exported as ${selectedFormat.toUpperCase()}`);
+        this.logActivity('Data exported as JSON');
         this.hideExportModal();
     }
     
@@ -1421,31 +1410,6 @@ class PostureMonitor {
         const a = document.createElement('a');
         a.href = url;
         a.download = `posture-data-${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    }
-    
-    downloadCSV(data) {
-        let csvContent = 'Date,Good Seconds,Poor Seconds,Total Sessions,Activity\n';
-        
-        csvContent += `${data.stats.date},${data.stats.goodSeconds},${data.stats.poorSeconds},${data.stats.totalSessionSeconds},\n`;
-        
-        if (data.stats.logs) {
-            data.stats.logs.forEach(log => {
-                const date = new Date(log.t).toISOString().slice(0, 10);
-                const time = new Date(log.t).toLocaleTimeString();
-                csvContent += `${date},,,,${time}: ${log.msg.replace(/,/g, ';')}\n`;
-            });
-        }
-        
-        const blob = new Blob([csvContent], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `posture-data-${new Date().toISOString().slice(0, 10)}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
