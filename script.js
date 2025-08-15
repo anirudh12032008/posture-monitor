@@ -113,7 +113,7 @@ class PostureMonitor {
         this.lastPose = null; 
         this.baselinePose = this.loadBaselinePose();
         this.fpsVal.textContent = this.fpsRange.value;
-        this.frameIntervalVal.textContent = this.settings.frameProcessInterval;
+        this.frameIntervalVal.textContent = this.settings.frameProcessInterval.toFixed(1);
         this.exercises = [
             { name: 'neck rolls', duration: 30 },
             { name: 'shoulder shrugs', duration: 30 },
@@ -203,7 +203,7 @@ class PostureMonitor {
         document.getElementById('adaptiveModeCheck').checked = this.settings.adaptiveMode;
         document.getElementById('modelTypeSelect').value = this.settings.modelType;
         this.frameIntervalRange.value = this.settings.frameProcessInterval;
-        this.frameIntervalVal.textContent = this.settings.frameProcessInterval;
+        this.frameIntervalVal.textContent = this.settings.frameProcessInterval.toFixed(1);
     }
     setupEventListeners() {
         this.startBtn.addEventListener('click', () => this.startCamera());
@@ -218,7 +218,7 @@ class PostureMonitor {
         });
         this.frameIntervalRange.addEventListener('input', (e) => {
             this.settings.frameProcessInterval = Number(e.target.value);
-            this.frameIntervalVal.textContent = e.target.value;
+            this.frameIntervalVal.textContent = Number(e.target.value).toFixed(1);
             this.saveSettings();
         });
         document.getElementById('breakBtn').addEventListener('click', () => this.startBreak());
