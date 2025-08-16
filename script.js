@@ -107,7 +107,7 @@ class PostureMonitor {
             keypointSize: 4,
             adaptiveMode: true,
             modelType: 'resnet50',
-            frameProcessInterval: 5  
+            frameProcessInterval: 2.0  
         };
         this.lastFrameProcessTime = 0; 
         this.lastPose = null; 
